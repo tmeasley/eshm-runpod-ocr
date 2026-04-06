@@ -21,6 +21,14 @@ import urllib.request
 
 import runpod
 
+# Load models once at startup (not per-request)
+print("Loading marker models...")
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+
+MODEL_DICT = create_model_dict()
+print("Models loaded successfully.")
+
 
 def download_pdf(url, dest_path):
     """Download a PDF from a URL."""
@@ -32,15 +40,12 @@ def download_pdf(url, dest_path):
 
 def convert_single_pdf(pdf_bytes, filename="document.pdf"):
     """Convert a single PDF to markdown using marker."""
-    from marker.converters.pdf import PdfConverter
-    from marker.models import create_model_dict
-
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, filename)
         with open(input_path, "wb") as f:
             f.write(pdf_bytes)
 
-        converter = PdfConverter(artifact_dict=create_model_dict())
+        converter = PdfConverter(artifact_dict=MODEL_DICT)
         rendered = converter(input_path)
         markdown = rendered.markdown
 
