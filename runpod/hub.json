@@ -1,0 +1,22 @@
+{
+  "input": {
+    "pdf_base64": {
+      "name": "PDF Base64",
+      "type": "string",
+      "description": "Base64-encoded PDF file content",
+      "default": ""
+    },
+    "pdf_url": {
+      "name": "PDF URL",
+      "type": "string",
+      "description": "URL to a PDF file (alternative to base64)",
+      "default": ""
+    },
+    "filename": {
+      "name": "Filename",
+      "type": "string",
+      "description": "Original filename of the PDF",
+      "default": "document.pdf"
+    }
+  }
+}
