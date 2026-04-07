@@ -1,16 +1,6 @@
 """
 RunPod Serverless Handler for marker-pdf OCR.
-
-Accepts base64-encoded PDFs, runs marker-pdf on GPU, returns markdown.
-
-Input formats:
-  Single:  {"pdf_base64": "...", "filename": "optional.pdf"}
-  Batch:   {"pdfs": [{"pdf_base64": "...", "filename": "doc1.pdf"}, ...]}
-  URL:     {"pdf_url": "https://example.com/file.pdf", "filename": "optional.pdf"}
-
-Output:
-  Single:  {"markdown": "...", "filename": "...", "device": "..."}
-  Batch:   {"results": [{"markdown": "...", "filename": "..."}, ...], "device": "..."}
+v8: Force marker settings to use CUDA after import.
 """
 
 import base64
@@ -23,28 +13,37 @@ import urllib.request
 import torch
 import runpod
 
-# Force CUDA if available
+# Detect device
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"[handler] PyTorch device: {DEVICE}", flush=True)
-print(f"[handler] CUDA available: {torch.cuda.is_available()}", flush=True)
+DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32
+
+print(f"[handler] torch.cuda.is_available() = {torch.cuda.is_available()}", flush=True)
+print(f"[handler] Device: {DEVICE}, Dtype: {DTYPE}", flush=True)
 if torch.cuda.is_available():
     print(f"[handler] GPU: {torch.cuda.get_device_name(0)}", flush=True)
-    print(f"[handler] VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB", flush=True)
+print(f"[handler] Torch version: {torch.__version__}", flush=True)
 
-# Explicitly set device for marker
+# Set env var BEFORE importing marker (marker reads it at import time via pydantic)
 os.environ["TORCH_DEVICE"] = DEVICE
 
-# Load models once at startup
-print("[handler] Loading marker models...", flush=True)
+# Now import marker
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
+from marker.settings import settings as marker_settings
 
+# Force override marker's settings object directly
+marker_settings.TORCH_DEVICE = DEVICE
+print(f"[handler] marker_settings.TORCH_DEVICE = {marker_settings.TORCH_DEVICE}", flush=True)
+print(f"[handler] marker_settings.TORCH_DEVICE_MODEL = {marker_settings.TORCH_DEVICE_MODEL}", flush=True)
+print(f"[handler] marker_settings.MODEL_DTYPE = {marker_settings.MODEL_DTYPE}", flush=True)
+
+# Load models
+print("[handler] Loading models...", flush=True)
 MODEL_DICT = create_model_dict()
-print("[handler] Models loaded successfully.", flush=True)
+print("[handler] Models loaded. Ready for jobs.", flush=True)
 
 
 def download_pdf(url, dest_path):
-    """Download a PDF from a URL."""
     req = urllib.request.Request(url, headers={"User-Agent": "RunPod-OCR/1.0"})
     with urllib.request.urlopen(req, timeout=120) as resp:
         with open(dest_path, "wb") as f:
@@ -52,25 +51,31 @@ def download_pdf(url, dest_path):
 
 
 def convert_single_pdf(pdf_bytes, filename="document.pdf"):
-    """Convert a single PDF to markdown using marker."""
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, filename)
         with open(input_path, "wb") as f:
             f.write(pdf_bytes)
-
         converter = PdfConverter(artifact_dict=MODEL_DICT)
         rendered = converter(input_path)
-        markdown = rendered.markdown
-
-        return {"markdown": markdown, "filename": filename}
+        return {"markdown": rendered.markdown, "filename": filename}
 
 
 def handler(job):
-    """Process OCR job."""
     job_input = job["input"]
 
+    # Diagnostic mode
+    if job_input.get("diagnostic"):
+        return {
+            "torch_version": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "device": DEVICE,
+            "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none",
+            "marker_device": marker_settings.TORCH_DEVICE,
+            "marker_device_model": marker_settings.TORCH_DEVICE_MODEL,
+            "marker_dtype": str(marker_settings.MODEL_DTYPE),
+        }
+
     try:
-        # Batch mode
         if "pdfs" in job_input:
             results = []
             for i, item in enumerate(job_input["pdfs"]):
@@ -85,13 +90,10 @@ def handler(job):
                 else:
                     results.append({"filename": fname, "error": "No pdf_base64 or pdf_url"})
                     continue
-
                 result = convert_single_pdf(pdf_bytes, fname)
                 results.append(result)
-
             return {"results": results, "device": DEVICE}
 
-        # Single PDF via base64
         elif "pdf_base64" in job_input:
             pdf_bytes = base64.b64decode(job_input["pdf_base64"])
             fname = job_input.get("filename", "document.pdf")
@@ -99,7 +101,6 @@ def handler(job):
             result["device"] = DEVICE
             return result
 
-        # Single PDF via URL
         elif "pdf_url" in job_input:
             fname = job_input.get("filename", "document.pdf")
             with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
