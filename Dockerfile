@@ -11,19 +11,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install marker-pdf and runpod SDK
-# Cache bust: v5
+# Install CUDA-enabled PyTorch FIRST (marker-pdf's pip install can overwrite with CPU torch)
+# Then install marker-pdf without deps to avoid torch replacement, then its other deps
+# v6: force CUDA torch
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu118
 RUN pip install --no-cache-dir marker-pdf runpod
 
-# Pre-download marker model weights during build (CPU only — no GPU in build env).
-# TORCH_DEVICE is set inline, NOT as ENV, so it does NOT persist to runtime.
+# Verify CUDA torch is present
+RUN python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'Torch version: {torch.__version__}')"
+
+# Pre-download marker model weights during build (CPU-only context during build is fine)
 RUN TORCH_DEVICE=cpu python -c "\
 from marker.models import create_model_dict; \
-print('Downloading models to cache...'); \
+print('Downloading models...'); \
 create_model_dict(); \
-print('Done.')"
+print('Models cached.')"
 
 COPY handler.py /app/handler.py
 
-# At runtime, handler.py detects CUDA and sets TORCH_DEVICE=cuda explicitly.
 CMD ["python", "-u", "/app/handler.py"]
