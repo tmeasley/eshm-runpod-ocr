@@ -1,26 +1,27 @@
-FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 WORKDIR /app
 
-# System deps for marker-pdf (OpenCV, rendering libs)
+# Install Python 3.10 + system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
+    python3.10 python3-pip python3.10-dev \
+    libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev \
+    && ln -sf /usr/bin/python3.10 /usr/bin/python \
+    && ln -sf /usr/bin/python3.10 /usr/bin/python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CUDA-enabled PyTorch FIRST (marker-pdf's pip install can overwrite with CPU torch)
-# Then install marker-pdf without deps to avoid torch replacement, then its other deps
-# v6: force CUDA torch
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# Install CUDA PyTorch first, then marker-pdf
+# v7: use nvidia/cuda base + explicit cu118 torch
+RUN pip install --no-cache-dir \
+    torch==2.1.0+cu118 torchvision==0.16.0+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
+
 RUN pip install --no-cache-dir marker-pdf runpod
 
-# Verify CUDA torch is present
-RUN python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'Torch version: {torch.__version__}')"
+# Verify torch sees CUDA
+RUN python -c "import torch; assert 'cu' in torch.__version__, f'CPU torch installed: {torch.__version__}'; print(f'Torch {torch.__version__} with CUDA support')"
 
-# Pre-download marker model weights during build (CPU-only context during build is fine)
+# Pre-download models
 RUN TORCH_DEVICE=cpu python -c "\
 from marker.models import create_model_dict; \
 print('Downloading models...'); \
