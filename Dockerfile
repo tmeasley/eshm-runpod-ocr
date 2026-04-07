@@ -14,10 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install marker-pdf and runpod SDK
 RUN pip install --no-cache-dir marker-pdf runpod
 
-# Pre-download marker model weights (runs on CPU during build — that's fine,
-# models are just downloaded and cached, not executed with GPU)
-ENV TORCH_DEVICE=cpu
-RUN python -c "\
+# Pre-download marker model weights during build.
+# TORCH_DEVICE=cpu is set ONLY for this RUN step (not persisted as ENV)
+# so that at runtime, marker auto-detects the GPU.
+RUN TORCH_DEVICE=cpu python -c "\
 from marker.models import create_model_dict; \
 print('Downloading models...'); \
 create_model_dict(); \
